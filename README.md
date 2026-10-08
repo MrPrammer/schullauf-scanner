@@ -1,0 +1,1 @@
+# schullauf-scanner
