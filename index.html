@@ -1,0 +1,213 @@
+
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport"
+        content="width=device-width, initial-scale=1">
+  <title>Schullauf Scanner</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 500px;
+      margin: auto;
+      padding: 16px;
+      background: #f4f6f8;
+    }
+    h1 { text-align: center; }
+    input, button {
+      padding: 12px;
+      font-size: 18px;
+      margin: 5px 0;
+      box-sizing: border-box;
+    }
+    input { width: 100%; }
+    button {
+      border: none;
+      border-radius: 8px;
+      background: #1664c0;
+      color: white;
+      cursor: pointer;
+    }
+    #reader {
+      background: white;
+      margin: 15px 0;
+    }
+    #status {
+      background: white;
+      padding: 16px;
+      border-radius: 10px;
+      text-align: center;
+      font-size: 22px;
+    }
+    li { padding: 5px; font-size: 18px; }
+  </style>
+</head>
+<body>
+  <h1>🏃 Schullauf Scanner</h1>
+
+  <label for="lauf">Laufbezeichnung:</label>
+  <input id="lauf" value="Jahrgang 2013">
+
+  <button id="start">Kamera starten</button>
+  <div id="reader"></div>
+
+  <div id="status">Noch keine Startnummer erfasst</div>
+
+  <h3>Erfasste Kinder: <span id="anzahl">0</span></h3>
+
+  <input id="nummer"
+         inputmode="numeric"
+         placeholder="Startnummer manuell eingeben">
+  <button id="hinzufuegen">Nummer hinzufügen</button>
+  <button id="rueckgaengig">Letzten Scan rückgängig</button>
+
+  <h3>Zieleinlauf</h3>
+  <ol id="liste"></ol>
+
+  <button id="export">CSV herunterladen</button>
+
+  <script>
+    const lauf = document.getElementById("lauf");
+    const status = document.getElementById("status");
+    const liste = document.getElementById("liste");
+    const anzahl = document.getElementById("anzahl");
+
+    let ergebnisse = [];
+    let scanner = null;
+    let gesperrtBis = 0;
+
+    function schluessel() {
+      return "schullauf_" + lauf.value.trim();
+    }
+
+    function laden() {
+      try {
+        ergebnisse = JSON.parse(
+          localStorage.getItem(schluessel()) || "[]"
+        );
+        if (!Array.isArray(ergebnisse)) ergebnisse = [];
+      } catch {
+        ergebnisse = [];
+      }
+      anzeigen();
+    }
+
+    function speichern() {
+      localStorage.setItem(
+        schluessel(),
+        JSON.stringify(ergebnisse)
+      );
+      anzeigen();
+    }
+
+    function anzeigen() {
+      anzahl.textContent = ergebnisse.length;
+      liste.replaceChildren();
+
+      ergebnisse.forEach(nummer => {
+        const li = document.createElement("li");
+        li.textContent = "Startnummer " + nummer;
+        liste.appendChild(li);
+      });
+    }
+
+    function erfassen(text) {
+      const nummer = String(text).trim();
+
+      if (!/^[0-9]+$/.test(nummer)) {
+        status.textContent = "Ungültiger QR-Code!";
+        return;
+      }
+
+      if (ergebnisse.includes(nummer)) {
+        status.textContent =
+          "⚠️ Nummer " + nummer + " bereits erfasst!";
+        return;
+      }
+
+      ergebnisse.push(nummer);
+      speichern();
+
+      status.textContent =
+        "✅ Platz " + ergebnisse.length +
+        ": Startnummer " + nummer;
+
+      if (navigator.vibrate) navigator.vibrate(100);
+    }
+
+    document.getElementById("start")
+      .addEventListener("click", async () => {
+        try {
+          if (scanner) return;
+
+          scanner = new Html5Qrcode("reader");
+
+          await scanner.start(
+            { facingMode: "environment" },
+            { fps: 15, qrbox: 220 },
+            text => {
+              const jetzt = Date.now();
+              if (jetzt < gesperrtBis) return;
+              gesperrtBis = jetzt + 700;
+              erfassen(text);
+            },
+            () => {}
+          );
+
+          status.textContent = "Kamera bereit!";
+        } catch (fehler) {
+          scanner = null;
+          status.textContent =
+            "Kamera konnte nicht gestartet werden.";
+          console.error(fehler);
+        }
+      });
+
+    document.getElementById("hinzufuegen")
+      .addEventListener("click", () => {
+        const feld = document.getElementById("nummer");
+        erfassen(feld.value);
+        feld.value = "";
+      });
+
+    document.getElementById("rueckgaengig")
+      .addEventListener("click", () => {
+        if (!ergebnisse.length) return;
+        const nummer = ergebnisse[ergebnisse.length - 1];
+
+        if (confirm("Letzte Nummer " + nummer + " entfernen?")) {
+          ergebnisse.pop();
+          speichern();
+          status.textContent = "Letzter Scan entfernt.";
+        }
+      });
+
+    document.getElementById("export")
+      .addEventListener("click", () => {
+        const zeilen = ["Rang;Startnummer"];
+
+        ergebnisse.forEach((nummer, i) => {
+          zeilen.push((i + 1) + ";" + nummer);
+        });
+
+        const csv = "\uFEFF" + zeilen.join("\r\n");
+        const blob = new Blob([csv], {
+          type: "text/csv;charset=utf-8"
+        });
+
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "Zieleinlauf.csv";
+        a.click();
+
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+
+    lauf.addEventListener("change", laden);
+    laden();
+  </script>
+</body>
+</html>
